@@ -5,3 +5,9 @@
        border-radius: .5rem; font-size: .875rem; }
 .btn:hover { background: #115e59; }
 table td, table th { padding: .5rem .6rem; }
+@media print {
+  body * { visibility: hidden; }
+  #print-area, #print-area * { visibility: visible; }
+  #print-area { position: absolute; left: 0; top: 0; width: 100%; }
+  .btn, select, header, button { display: none !important; }
+}
