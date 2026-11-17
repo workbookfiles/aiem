@@ -443,6 +443,7 @@ async function tabLogs() {
   const selectedDate = window.selectedLogDate || uniqueDates[0]; // Default to latest
   
   const report = generateReportData(logs, cmap, smap, selectedDate);
+  window.currentReportData = { logs, cmap, smap, selectedDate, report };
 
   const dateOptions = uniqueDates.map(dt => 
     `<option value="${dt}" ${dt === selectedDate ? 'selected' : ''}>${dt}</option>`
@@ -514,6 +515,15 @@ async function renderTab() {
   
   if (state.tab === 'logs') {
     body.innerHTML = await tabLogs();
+    const dateSelect = $('#log-date-select');
+    if (dateSelect) dateSelect.onchange = e => { window.selectedLogDate = e.target.value; renderTab(); };
+    const reportData = window.currentReportData;
+    if (reportData?.report) {
+      $('#btn-img').onclick = () => downloadImage(reportData.report);
+      $('#btn-csv').onclick = () => downloadCSV(reportData.logs, reportData.cmap, reportData.smap, reportData.selectedDate);
+      $('#btn-doc').onclick = () => downloadWord(reportData.report);
+      $('#btn-pdf').onclick = () => window.print();
+    }
     return;
   }
 
