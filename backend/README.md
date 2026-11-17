@@ -1,21 +1,38 @@
 # Apps Script backend reference
 
-These files are intended to be copied into the existing Google Apps Script project only after review and backup. They are not deployed automatically by GitHub Pages.
+These files are prepared for review and manual installation in the existing Google Apps Script project. GitHub does not deploy them to Apps Script automatically.
 
-## Storage migration
+## Files prepared
 
-`Store.gs` provides stricter Drive-backed JSON storage. Before replacing the live file:
+- `Config.gs` — idempotent setup, default administrator bootstrap, and email normalization.
+- `Api.gs` — POST-only API entry point, Google ID-token claim checks, role gates, and route-level locking for mutations.
+- `Admin.gs` — validation for admin operations, teacher account provisioning, protected class/subject deletion, and guardian contact storage without parent accounts.
+- `Teacher.gs` — teacher-only assigned class/subject data and server-side validation of lesson submissions.
+- `Store.gs` — Drive-backed JSON storage with corruption and duplicate-file checks plus a script-lock helper.
 
-1. Make a copy of the entire `AIEM_Data` Drive folder.
-2. Confirm there is exactly one folder named `AIEM_Data` and one JSON file per collection.
-3. Replace the existing storage helpers.
-4. Update API routing so every operation that performs a read-modify-write is wrapped by `withDataLock_(function () { return ...; })`. This includes admin create/assign/toggle/delete actions, teacher log submission, setup, and any future collection mutations. Do not wrap nested calls twice; the script lock is not re-entrant.
-5. Test with a copy of the data before using the live folder.
+## Migration procedure
 
-## Important
+1. Keep the original Apps Script project unchanged. Work in the backup copy first.
+2. Confirm the backup of the `AIEM_Data` folder is available.
+3. Confirm there is exactly one Drive folder named `AIEM_Data` and no duplicate JSON collection files.
+4. In the backup Apps Script project, replace the corresponding source files with the versions in this folder. The files in this folder are reference source; they are not installed or deployed automatically.
+5. Ensure the project uses the same `CLIENT_ID` and `INITIAL_ADMIN_EMAIL` values as the existing deployment. Do not change these to guessed values.
+6. Run `setup()` only against a test copy of the data first. It is designed to be idempotent and does not intentionally overwrite existing collections.
+7. Test administrator login, teacher login, assigned class/subject visibility, lesson submission, and admin create/assign/toggle/delete operations against the test copy.
+8. Only after those checks pass should the production project be updated and redeployed as a new Apps Script web-app version. Keep the prior deployment/version available for rollback.
 
-- A corrupt JSON file now throws an error instead of returning `null`. This is intentional: it prevents accidental overwriting of damaged data with an empty array.
-- Duplicate Drive folders or same-named JSON files now stop execution and require manual consolidation.
-- `write_()` itself does not acquire a lock. Lock the entire read-modify-write transaction at the API route boundary, not only the final write.
-- The parent portal is a later phase. Keep guardian contact fields on student records if needed, but do not create parent login accounts or expose parent-data routes in this phase.
-- This source is a reviewed reference in GitHub; it is not yet installed in or deployed from the live Apps Script project.
+## Locking and data safety
+
+Every API mutation route wraps its complete read-modify-write operation in `withDataLock_()`. Do not add another lock inside those route handlers or inside the called mutation functions; Apps Script script locks are not re-entrant. If you add a new mutation route, lock the entire transaction at the route boundary.
+
+A corrupt JSON file throws an error instead of returning `null`; this prevents a later write from silently replacing damaged data with an empty array. Duplicate Drive folders or same-named JSON files stop execution and require manual consolidation. `write_()` does not acquire a lock itself.
+
+Class and subject deletion is blocked while referenced by students, teachers, or lesson logs. Teacher deletion is blocked when lesson history exists; otherwise the corresponding teacher account is disabled. The last active administrator and the current administrator cannot be disabled.
+
+## Parent portal scope
+
+Guardian contact fields may remain on student records. Parent user provisioning and parent-facing API routes are intentionally excluded from this phase. Existing parent-role records, if any, are not promoted or modified by this code; parent login is not enabled.
+
+## Testing status
+
+These source files are committed to the remediation branch for review. The live Apps Script project and live Drive data have not been changed. The latest backend commit has no reported GitHub Actions run or status check yet, so do not treat this as a passed backend test or a production-ready deployment.
