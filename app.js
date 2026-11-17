@@ -47,7 +47,7 @@ async function boot() {
 function renderLogin(error) {
   app.innerHTML = `
     <div class="max-w-md mx-auto bg-white rounded-2xl shadow p-8 mt-16">
-      <h1 class="text-xl font-semibold mb-1">Alamdar Institute of Education Hamri</h1>
+     <h1 class="text-xl font-semibold mb-1">Alamdar Institute of Education Hamray</h1>
       <p class="text-sm text-slate-500 mb-6">Sign in with your school Google account.</p>
       ${error ? `<p class="text-sm text-red-600 mb-4">${esc(error)}</p>` : ''}
       <div id="gbtn"></div>
