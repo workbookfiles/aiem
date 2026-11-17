@@ -9,7 +9,6 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g,
 let ID_TOKEN = sessionStorage.getItem('idtoken') || null;
 const state = { user: null, data: null, tab: 'classes' };
 
-// --- LOADING SCREEN HELPER ---
 function showLoading() {
   app.innerHTML = `
     <div class="flex flex-col items-center justify-center mt-32">
@@ -48,7 +47,7 @@ async function boot() {
     state.user = who.user;
     if (state.user.role === 'admin') await renderAdmin();
     else if (state.user.role === 'teacher') await renderTeacher();
-    else renderNotice('Signed in as ' + state.user.role + '. Parent portal coming in Phase 3.');
+    else renderNotice('Signed in as ' + state.user.role + '.');
   } catch (e) {
     sessionStorage.removeItem('idtoken'); ID_TOKEN = null;
     renderLogin(e.message);
@@ -76,121 +75,10 @@ function renderNotice(msg) {
 }
 
 /* ==========================================
-   TEACHER DASHBOARD
-   ========================================== */
-async function renderTeacher() {
-  showLoading();
-  state.data = await api('getTeacherData');
-  const { teacher, classes, subjects, logs } = state.data;
-  
-  const cmap = Object.fromEntries(classes.map(c => [c.id, c.name + (c.section ? ' · ' + c.section : '')]));
-  const smap = Object.fromEntries(subjects.map(s => [s.id, s.name]));
-
-  const assignOpts = (teacher.assignments || []).map(a => 
-    `<option value="${a.classId}|${a.subjectId}">${esc(cmap[a.classId] || '?')} — ${esc(smap[a.subjectId] || '?')}</option>`
-  ).join('');
-
-  const logRows = logs.map(l => `
-    <tr class="border-t">
-      <td class="whitespace-nowrap">${esc(l.date)}</td>
-      <td>${esc(cmap[l.classId] || '?')}<br><span class="text-xs text-slate-500">${esc(smap[l.subjectId] || '?')}</span></td>
-      <td class="max-w-xs whitespace-pre-wrap">${esc(l.classwork || '—')}</td>
-      <td class="max-w-xs whitespace-pre-wrap">${esc(l.homework || '—')}</td>
-      <td class="whitespace-nowrap">${esc(l.dueDate || '—')}</td>
-    </tr>`).join('');
-
-  app.innerHTML = `
-    <div class="max-w-6xl mx-auto px-4 pb-12">
-      <div class="flex flex-wrap items-center justify-between gap-2 mb-6">
-        <div>
-          <h1 class="text-xl font-semibold">Teacher Dashboard</h1>
-          <p class="text-sm text-slate-500">Welcome, ${esc(teacher.name)}</p>
-        </div>
-        <button id="logout" class="px-3 py-1.5 rounded-lg bg-slate-200 hover:bg-slate-300 text-sm">Sign out</button>
-      </div>
-
-      <div class="bg-white rounded-xl shadow p-4 mb-6">
-        <h3 class="font-medium mb-3 text-teal-800">Submit Daily Class Log</h3>
-        ${assignOpts ? `
-        <form id="f-log" class="grid md:grid-cols-2 gap-4">
-          <div class="md:col-span-2">
-            <label class="block text-sm mb-1">Class & Subject</label>
-            <select name="assignment" required class="input w-full">${assignOpts}</select>
-          </div>
-          <div>
-            <label class="block text-sm mb-1">Date</label>
-            <input name="date" type="date" required class="input w-full" value="${new Date().toISOString().split('T')[0]}" />
-          </div>
-          <div>
-            <label class="block text-sm mb-1">Homework Due Date (optional)</label>
-            <input name="dueDate" type="date" class="input w-full" />
-          </div>
-          <div>
-            <label class="block text-sm mb-1">Classwork Done</label>
-            <textarea name="classwork" required rows="3" class="input w-full" placeholder="What was taught in class..."></textarea>
-          </div>
-          <div>
-            <label class="block text-sm mb-1">Homework Given</label>
-            <textarea name="homework" rows="3" class="input w-full" placeholder="What homework was assigned..."></textarea>
-          </div>
-          <div class="md:col-span-2">
-            <button class="btn w-full md:w-auto">Submit Log</button>
-          </div>
-        </form>
-        ` : '<p class="text-red-500 text-sm">You have no classes assigned yet. Please contact the Admin.</p>'}
-      </div>
-
-      <div class="bg-white rounded-xl shadow overflow-x-auto">
-        <table class="w-full text-sm">
-          <thead class="bg-slate-100 text-left">
-            <tr>
-              <th>Date</th>
-              <th>Class & Subject</th>
-              <th>Classwork</th>
-              <th>Homework</th>
-              <th>Due Date</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${logRows || '<tr><td colspan="5" class="text-center py-6 text-slate-400">No logs submitted yet</td></tr>'}
-          </tbody>
-        </table>
-      </div>
-    </div>`;
-
-  $('#logout').onclick = () => { sessionStorage.removeItem('idtoken'); location.reload(); };
-
-  const fLog = $('#f-log');
-  if (fLog) {
-    fLog.onsubmit = async e => {
-      e.preventDefault();
-      const f = new FormData(fLog);
-      const [classId, subjectId] = f.get('assignment').split('|');
-      const btn = fLog.querySelector('button');
-      btn.innerText = 'Saving to Drive...'; btn.disabled = true;
-
-      try {
-        await api('submitLog', {
-          classId, subjectId,
-          date: f.get('date'),
-          classwork: f.get('classwork'),
-          homework: f.get('homework'),
-          dueDate: f.get('dueDate')
-        });
-        await renderTeacher(); // Reload the page to show the new log
-      } catch (err) {
-        alert(err.message);
-        btn.innerText = 'Submit Log'; btn.disabled = false;
-      }
-    };
-  }
-}
-
-/* ==========================================
    ADMIN DASHBOARD
    ========================================== */
 async function renderAdmin() {
-  showLoading(); // <--- Show spinner while fetching admin data
+  showLoading();
   state.data = await api('listAll');
   
   app.innerHTML = `
@@ -207,7 +95,8 @@ async function renderAdmin() {
     </div>`;
   $('#logout').onclick = () => { sessionStorage.removeItem('idtoken'); location.reload(); };
 
-  const tabs = ['classes','subjects','teachers','students','users'];
+  // Added 'logs' to the tabs list
+  const tabs = ['classes','subjects','teachers','students','logs','users'];
   $('#tabs').innerHTML = tabs.map(t => `
     <button data-tab="${t}" class="px-3 py-1.5 rounded-lg text-sm
       ${state.tab === t ? 'bg-teal-700 text-white' : 'bg-white shadow'}">${t[0].toUpperCase()+t.slice(1)}</button>
@@ -338,6 +227,63 @@ function tabStudents() {
     `) + tableHtml(['Student','Class','Parent','Parent email',''], rows);
 }
 
+// NEW TAB: DAILY LOGS & SUMMARIES
+async function tabLogs() {
+  const logs = await api('getAllLogs');
+  const d = state.data;
+  const cmap = Object.fromEntries(d.classes.map(c => [c.id, c.name + (c.section ? ' (' + c.section + ')' : '')]));
+  const smap = Object.fromEntries(d.subjects.map(s => [s.id, s.name]));
+
+  if (logs.length === 0) {
+    return `<div class="bg-white p-6 rounded-xl shadow text-center text-slate-500">No teacher logs submitted yet.</div>`;
+  }
+
+  const rows = logs.map(l => `
+    <tr class="border-t hover:bg-slate-50">
+      <td class="whitespace-nowrap">${esc(l.date)}</td>
+      <td><strong>${esc(cmap[l.classId] || '?')}</strong><br><span class="text-xs text-teal-700">${esc(smap[l.subjectId] || '?')}</span></td>
+      <td class="max-w-xs whitespace-pre-wrap text-xs">${esc(l.classwork || '—')}</td>
+      <td class="max-w-xs whitespace-pre-wrap text-xs">${esc(l.homework || '—')}</td>
+      <td class="whitespace-nowrap text-xs">${esc(l.dueDate || '—')}</td>
+      <td class="text-xs text-slate-500">${esc(l.teacherName)}</td>
+    </tr>`).join('');
+
+  // Create a text version for WhatsApp
+  let waText = `*AIEM Daily Homework Summary*\n\n`;
+  const today = logs[0].date; // Group by the latest date
+  const todayLogs = logs.filter(l => l.date === today);
+  
+  waText += `📅 Date: ${today}\n\n`;
+  todayLogs.forEach(l => {
+    waText += `📚 *Class:* ${cmap[l.classId] || '?'}\n`;
+    waText += `📖 *Subject:* ${smap[l.subjectId] || '?'}\n`;
+    if (l.classwork) waText += `✍️ *Classwork:* ${l.classwork}\n`;
+    if (l.homework) waText += `🏠 *Homework:* ${l.homework}\n`;
+    if (l.dueDate) waText += `⏰ *Due Date:* ${l.dueDate}\n`;
+    waText += `\n`;
+  });
+
+  return `
+    <div class="mb-4 bg-teal-50 border border-teal-200 p-4 rounded-xl flex justify-between items-center flex-wrap gap-4">
+      <div>
+        <h3 class="font-medium text-teal-900">WhatsApp Summary</h3>
+        <p class="text-sm text-teal-700">Copy today's homework to send to parents.</p>
+      </div>
+      <button id="copy-wa" class="btn bg-green-600 hover:bg-green-700 shadow-md">📋 Copy for WhatsApp</button>
+    </div>
+    ${tableHtml(['Date', 'Class & Subject', 'Classwork', 'Homework', 'Due Date', 'Teacher'], rows)}
+    <script>
+      document.getElementById('copy-wa').onclick = () => {
+        navigator.clipboard.writeText(${JSON.stringify(waText)}).then(() => {
+          const btn = document.getElementById('copy-wa');
+          btn.innerText = '✅ Copied!';
+          setTimeout(() => btn.innerText = '📋 Copy for WhatsApp', 2000);
+        });
+      };
+    </script>
+  `;
+}
+
 function tabUsers() {
   const rows = state.data.users.map(u => `
     <tr class="border-t">
@@ -354,8 +300,14 @@ function tabUsers() {
   return tableHtml(['Email','Name','Role','Status',''], rows);
 }
 
-function renderTab() {
+async function renderTab() {
   const body = $('#tab-body');
+  
+  if (state.tab === 'logs') {
+    body.innerHTML = await tabLogs();
+    return;
+  }
+
   body.innerHTML =
       state.tab === 'classes'  ? tabClasses()
     : state.tab === 'subjects' ? tabSubjects()
@@ -363,6 +315,7 @@ function renderTab() {
     : state.tab === 'students' ? tabStudents()
     : tabUsers();
 
+  // ... (rest of the form submission logic remains the same as before)
   const fClass = $('#f-class');
   if (fClass) fClass.onsubmit = async e => {
     e.preventDefault(); const f = new FormData(fClass);
@@ -415,4 +368,115 @@ function renderTab() {
     b.onclick = async () => { await api('toggleUser', {
       id: b.dataset.toggleUser, active: b.dataset.active !== 'true'
     }); renderAdmin(); });
+}
+
+/* ==========================================
+   TEACHER DASHBOARD
+   ========================================== */
+async function renderTeacher() {
+  showLoading();
+  state.data = await api('getTeacherData');
+  const { teacher, classes, subjects, logs } = state.data;
+  
+  const cmap = Object.fromEntries(classes.map(c => [c.id, c.name + (c.section ? ' · ' + c.section : '')]));
+  const smap = Object.fromEntries(subjects.map(s => [s.id, s.name]));
+
+  const assignOpts = (teacher.assignments || []).map(a => 
+    `<option value="${a.classId}|${a.subjectId}">${esc(cmap[a.classId] || '?')} — ${esc(smap[a.subjectId] || '?')}</option>`
+  ).join('');
+
+  const logRows = logs.map(l => `
+    <tr class="border-t">
+      <td class="whitespace-nowrap">${esc(l.date)}</td>
+      <td>${esc(cmap[l.classId] || '?')}<br><span class="text-xs text-slate-500">${esc(smap[l.subjectId] || '?')}</span></td>
+      <td class="max-w-xs whitespace-pre-wrap">${esc(l.classwork || '—')}</td>
+      <td class="max-w-xs whitespace-pre-wrap">${esc(l.homework || '—')}</td>
+      <td class="whitespace-nowrap">${esc(l.dueDate || '—')}</td>
+    </tr>`).join('');
+
+  app.innerHTML = `
+    <div class="max-w-6xl mx-auto px-4 pb-12">
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-6">
+        <div>
+          <h1 class="text-xl font-semibold">Teacher Dashboard</h1>
+          <p class="text-sm text-slate-500">Welcome, ${esc(teacher.name)}</p>
+        </div>
+        <button id="logout" class="px-3 py-1.5 rounded-lg bg-slate-200 hover:bg-slate-300 text-sm">Sign out</button>
+      </div>
+
+      <div class="bg-white rounded-xl shadow p-4 mb-6">
+        <h3 class="font-medium mb-3 text-teal-800">Submit Daily Class Log</h3>
+        ${assignOpts ? `
+        <form id="f-log" class="grid md:grid-cols-2 gap-4">
+          <div class="md:col-span-2">
+            <label class="block text-sm mb-1">Class & Subject</label>
+            <select name="assignment" required class="input w-full">${assignOpts}</select>
+          </div>
+          <div>
+            <label class="block text-sm mb-1">Date</label>
+            <input name="date" type="date" required class="input w-full" value="${new Date().toISOString().split('T')[0]}" />
+          </div>
+          <div>
+            <label class="block text-sm mb-1">Homework Due Date (optional)</label>
+            <input name="dueDate" type="date" class="input w-full" />
+          </div>
+          <div>
+            <label class="block text-sm mb-1">Classwork Done</label>
+            <textarea name="classwork" required rows="3" class="input w-full" placeholder="What was taught in class..."></textarea>
+          </div>
+          <div>
+            <label class="block text-sm mb-1">Homework Given</label>
+            <textarea name="homework" rows="3" class="input w-full" placeholder="What homework was assigned..."></textarea>
+          </div>
+          <div class="md:col-span-2">
+            <button class="btn w-full md:w-auto">Submit Log</button>
+          </div>
+        </form>
+        ` : '<p class="text-red-500 text-sm">You have no classes assigned yet. Please contact the Admin.</p>'}
+      </div>
+
+      <div class="bg-white rounded-xl shadow overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-slate-100 text-left">
+            <tr>
+              <th>Date</th>
+              <th>Class & Subject</th>
+              <th>Classwork</th>
+              <th>Homework</th>
+              <th>Due Date</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${logRows || '<tr><td colspan="5" class="text-center py-6 text-slate-400">No logs submitted yet</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+
+  $('#logout').onclick = () => { sessionStorage.removeItem('idtoken'); location.reload(); };
+
+  const fLog = $('#f-log');
+  if (fLog) {
+    fLog.onsubmit = async e => {
+      e.preventDefault();
+      const f = new FormData(fLog);
+      const [classId, subjectId] = f.get('assignment').split('|');
+      const btn = fLog.querySelector('button');
+      btn.innerText = 'Saving to Drive...'; btn.disabled = true;
+
+      try {
+        await api('submitLog', {
+          classId, subjectId,
+          date: f.get('date'),
+          classwork: f.get('classwork'),
+          homework: f.get('homework'),
+          dueDate: f.get('dueDate')
+        });
+        await renderTeacher();
+      } catch (err) {
+        alert(err.message);
+        btn.innerText = 'Submit Log'; btn.disabled = false;
+      }
+    };
+  }
 }
