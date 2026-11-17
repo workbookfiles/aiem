@@ -1,5 +1,5 @@
 const API_URL   = 'PASTE_API_URL_HERE';
-const CLIENT_ID = 'PASTE_CLIENT_ID_HERE';
+const CLIENT_ID = '624013566184-6k4pjjk80rdhuo341270slup4e6sm0sa.apps.googleusercontent.com';
 
 const $ = s => document.querySelector(s);
 const app = $('#app');
