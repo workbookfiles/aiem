@@ -1,10 +1,11 @@
+import { escapeHtml, csvCell, localDateISO } from './utils.js';
+
 const API_URL   = 'https://script.google.com/macros/s/AKfycbzwBRVOPgkFz7uWuE1alH9PfU9G1XCi5bPMMFXFzz8CWBbAF5safm8EAcGC73sX00k/exec';
 const CLIENT_ID = '624013566184-6k4pjjk80rdhuo341270slup4e6sm0sa.apps.googleusercontent.com';
 
 const $ = s => document.querySelector(s);
 const app = $('#app');
-const esc = s => String(s ?? '').replace(/[&<>"']/g,
-  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const esc = escapeHtml;
 
 let ID_TOKEN = sessionStorage.getItem('idtoken') || null;
 const state = { user: null, data: null, tab: 'classes' };
@@ -18,21 +19,35 @@ function showLoading() {
 }
 
 async function api(action, payload = {}) {
-  const res = await fetch(API_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify({ action, token: ID_TOKEN, ...payload })
-  });
-  const j = await res.json();
-  if (!j.ok) throw new Error(j.error);
-  return j.data;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20000);
+  try {
+    const res = await fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action, token: ID_TOKEN, ...payload }), signal: controller.signal });
+    if (!res.ok) throw new Error(`Server returned HTTP ${res.status}. Please try again.`);
+    let j;
+    try { j = await res.json(); } catch { throw new Error('The server returned an invalid response. Please try again.'); }
+    if (!j || j.ok !== true) throw new Error(j?.error || 'The request could not be completed.');
+    return j.data;
+  } catch (error) {
+    if (error.name === 'AbortError') throw new Error('The request timed out. Check your connection and try again.');
+    if (error instanceof TypeError) throw new Error('Network error. Check your internet connection and try again.');
+    throw error;
+  } finally { clearTimeout(timeout); }
 }
 
-window.onload = function init() {
-  if (!window.google || !google.accounts) { setTimeout(init, 300); return; }
-  google.accounts.id.initialize({ client_id: CLIENT_ID, callback: onSignIn });
-  if (ID_TOKEN) boot(); else renderLogin();
-};
+window.addEventListener('load', function init() {
+  let attempts = 0;
+  const connectGoogle = () => {
+    if (window.google?.accounts?.id) {
+      google.accounts.id.initialize({ client_id: CLIENT_ID, callback: onSignIn });
+      if (ID_TOKEN) boot(); else renderLogin();
+      return;
+    }
+    if (++attempts >= 40) { renderLogin('Google sign-in did not load. Check your connection, refresh the page, and try again.'); return; }
+    setTimeout(connectGoogle, Math.min(250 * attempts, 1500));
+  };
+  connectGoogle();
+});
 
 async function onSignIn(r) {
   ID_TOKEN = r.credential;
@@ -49,15 +64,14 @@ async function boot() {
     else if (state.user.role === 'teacher') await renderTeacher();
     else renderNotice('Signed in as ' + state.user.role + '.');
   } catch (e) {
-    sessionStorage.removeItem('idtoken'); ID_TOKEN = null;
-    renderLogin(e.message);
+    renderAuthError(e.message);
   }
 }
 
 function renderLogin(error) {
   app.innerHTML = `
     <div class="max-w-md mx-auto bg-white rounded-2xl shadow p-8 mt-16 text-center">
-      <h1 class="text-xl font-semibold mb-1">Alamdar Institute of Education Hamray</h1>
+      <h1 class="text-xl font-semibold mb-1">Alamdar Edu. Inst. Hamray</h1>
       <p class="text-sm text-slate-500 mb-6">Sign in with your school Google account.</p>
       ${error ? `<p class="text-sm text-red-600 mb-4">${esc(error)}</p>` : ''}
       <div id="gbtn" class="flex justify-center"></div>
@@ -65,6 +79,11 @@ function renderLogin(error) {
   google.accounts.id.renderButton($('#gbtn'), { theme: 'filled_blue', size: 'large', width: 320 });
 }
 
+function renderAuthError(message) {
+  app.innerHTML = `<div class="max-w-md mx-auto bg-white rounded-2xl shadow p-8 mt-16 text-center"><h1 class="text-xl font-semibold mb-2">Alamdar Edu. Inst. Hamray</h1><p class="text-sm text-red-600 mb-5">${esc(message)}</p><div class="flex justify-center gap-2"><button id="retry" class="btn">Try again</button><button id="signout" class="px-3 py-2 rounded-lg bg-slate-200 text-sm">Sign out</button></div></div>`;
+  $('#retry').onclick = boot;
+  $('#signout').onclick = () => { sessionStorage.removeItem('idtoken'); ID_TOKEN = null; google.accounts.id.disableAutoSelect(); renderLogin(); };
+}
 function renderNotice(msg) {
   app.innerHTML = `
     <div class="max-w-md mx-auto bg-white rounded-2xl shadow p-8 mt-16 text-center">
@@ -136,7 +155,7 @@ function tabClasses() {
       <td>${esc(c.name)}</td>
       <td>${esc(c.section || '—')}</td>
       <td>${d.students.filter(s => s.classId === c.id).length}</td>
-      <td class="text-right"><button data-del-class="${c.id}" class="text-red-600 text-xs">Delete</button></td>
+      <td class="text-right"><button data-del-class="${esc(c.id)}" class="text-red-600 text-xs">Delete</button></td>
     </tr>`);
   return card('Add class', `
       <form id="f-class" class="flex flex-wrap gap-2">
@@ -152,7 +171,7 @@ function tabSubjects() {
   const rows = d.subjects.map(s => `
     <tr class="border-t">
       <td>${esc(s.name)}</td>
-      <td class="text-right"><button data-del-subject="${s.id}" class="text-red-600 text-xs">Delete</button></td>
+      <td class="text-right"><button data-del-subject="${esc(s.id)}" class="text-red-600 text-xs">Delete</button></td>
     </tr>`);
   return card('Add subject', `
       <form id="f-subject" class="flex flex-wrap gap-2">
@@ -175,12 +194,12 @@ function tabTeachers() {
         <td>${esc(t.name)}</td>
         <td>${esc(t.email || '—')}<div class="text-xs text-slate-500">${esc(t.phone || '')}</div></td>
         <td>${tags}</td>
-        <td class="text-right"><button data-del-teacher="${t.id}" class="text-red-600 text-xs">Delete</button></td>
+        <td class="text-right"><button data-del-teacher="${esc(t.id)}" class="text-red-600 text-xs">Delete</button></td>
       </tr>`;
   });
-  const teacherOpts = d.teachers.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('');
-  const classOpts   = d.classes.map(c => `<option value="${c.id}">${esc(c.name)}${c.section?' · '+esc(c.section):''}</option>`).join('');
-  const subjectOpts = d.subjects.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
+  const teacherOpts = d.teachers.map(t => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('');
+  const classOpts   = d.classes.map(c => `<option value="${esc(c.id)}">${esc(c.name)}${c.section?' · '+esc(c.section):''}</option>`).join('');
+  const subjectOpts = d.subjects.map(s => `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('');
   return card('Add teacher', `
       <form id="f-teacher" class="grid md:grid-cols-4 gap-2">
         <input name="name" required placeholder="Full name" class="input" />
@@ -208,7 +227,7 @@ function tabStudents() {
       <td>${esc(cmap[s.classId] || '—')}</td>
       <td>${esc(s.parentName || '—')}<div class="text-xs text-slate-500">${esc(s.parentPhone || '')}</div></td>
       <td>${esc(s.parentEmail || '—')}</td>
-      <td class="text-right"><button data-del-student="${s.id}" class="text-red-600 text-xs">Delete</button></td>
+      <td class="text-right"><button data-del-student="${esc(s.id)}" class="text-red-600 text-xs">Delete</button></td>
     </tr>`);
   const classOpts = d.classes.map(c => `<option value="${c.id}">${esc(c.name)}${c.section?' · '+esc(c.section):''}</option>`).join('');
   return card('Add student', `
@@ -257,7 +276,7 @@ function downloadImage(report) {
   // Calculate height based on content
   let y = 20;
   ctx.font = '24px bold Arial';
-  const title = "Alamdar Institute of Education Hamray";
+  const title = "Alamdar Edu. Inst. Hamray";
   const dateText = "Daily Homework Report - " + report.date;
   
   let totalLines = 2; // Title + Date
@@ -336,24 +355,21 @@ function downloadImage(report) {
   ctx.fillStyle = '#94a3b8';
   ctx.font = '12px Arial';
   ctx.textAlign = 'center';
-  ctx.fillText('Generated by AIEM Portal', canvas.width/2, canvas.height - 20);
+  ctx.fillText('Generated by Alamdar Edu. Inst. Hamray', canvas.width/2, canvas.height - 20);
 
   // Share or Download
   canvas.toBlob(blob => {
+    if (!blob) { alert('Could not create the report image. Please try again.'); return; }
     const file = new File([blob], `AIEM_Report_${report.date}.png`, { type: 'image/png' });
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      navigator.share({
-        files: [file],
-        title: 'AIEM Daily Report',
-        text: 'Here is the daily homework report.'
-      });
+      navigator.share({ files: [file], title: 'Alamdar Edu Daily Report', text: 'Here is the daily homework report.' }).catch(error => { if (error.name !== 'AbortError') alert('Sharing failed. Please try downloading instead.'); });
     } else {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `AIEM_Report_${report.date}.png`;
+      a.download = `Alamdar_Edu_Report_${report.date}.png`;
       a.click();
-      URL.revokeObjectURL(url);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
   });
 }
@@ -378,38 +394,26 @@ function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
 
 function downloadCSV(logs, cmap, smap, date) {
   const dailyLogs = logs.filter(l => l.date === date);
-  let csv = "Class,Subject,Classwork Done,Homework Given,Due Date\n";
-  
-  dailyLogs.forEach(l => {
-    const cls = `"${cmap[l.classId] || ''}"`;
-    const sub = `"${smap[l.subjectId] || ''}"`;
-    const cw = `"${(l.classwork || '').replace(/"/g, '""')}"`;
-    const hw = `"${(l.homework || '').replace(/"/g, '""')}"`;
-    const due = `"${l.dueDate || ''}"`;
-    csv += `${cls},${sub},${cw},${hw},${due}\n`;
-  });
-
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `AIEM_Logs_${date}.csv`;
-  a.click();
+  const rows = [['Class','Subject','Classwork Done','Homework Given','Due Date'].map(csvCell).join(','),
+    ...dailyLogs.map(l => [cmap[l.classId] || '', smap[l.subjectId] || '', l.classwork || '', l.homework || '', l.dueDate || ''].map(csvCell).join(','))];
+  const blob = new Blob([rows.join('\r\n') + '\r\n'], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob); const a = document.createElement('a');
+  a.href = url; a.download = `Alamdar_Edu_Logs_${date}.csv`; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-
 function downloadWord(report) {
   let html = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>`;
   html += `<head><meta charset='utf-8'><title>Daily Report</title><style>body { font-family: Arial; } h1 { text-align: center; color: #0f766e; } h2 { color: #0f766e; border-bottom: 1px solid #ccc; } h3 { margin-bottom: 5px; } p { margin-top: 5px; }</style></head><body>`;
-  html += `<h1>Alamdar Institute of Education Hamray</h1>`;
-  html += `<h2 style="text-align:center; border:none;">Daily Report: ${report.date}</h2>`;
+  html += `<h1>Alamdar Edu. Inst. Hamray</h1>`;
+  html += `<h2 style="text-align:center; border:none;">Daily Report: ${esc(report.date)}</h2>`;
   
   Object.keys(report.grouped).forEach(cls => {
-    html += `<h2>Class: ${cls}</h2>`;
+    html += `<h2>Class: ${esc(cls)}</h2>`;
     report.grouped[cls].forEach(sub => {
-      html += `<h3>Subject: ${sub.subject}</h3>`;
-      html += `<p><strong>Classwork Done:</strong> ${sub.classwork}</p>`;
-      html += `<p><strong>Homework Given:</strong> ${sub.homework}</p>`;
-      if(sub.dueDate) html += `<p><strong>Due Date:</strong> ${sub.dueDate}</p>`;
+      html += `<h3>Subject: ${esc(sub.subject)}</h3>`;
+      html += `<p><strong>Classwork Done:</strong> ${esc(sub.classwork)}</p>`;
+      html += `<p><strong>Homework Given:</strong> ${esc(sub.homework)}</p>`;
+      if(sub.dueDate) html += `<p><strong>Due Date:</strong> ${esc(sub.dueDate)}</p>`;
       html += `<hr/>`;
     });
   });
@@ -419,8 +423,9 @@ function downloadWord(report) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `AIEM_Report_${report.date}.doc`;
+  a.download = `Alamdar_Edu_Report_${report.date}.doc`;
   a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 async function tabLogs() {
@@ -496,7 +501,7 @@ function tabUsers() {
       <td>${esc(u.role)}</td>
       <td>${u.active ? 'Active' : 'Disabled'}</td>
       <td class="text-right">
-        <button data-toggle-user="${u.id}" data-active="${u.active}"
+        <button data-toggle-user="${esc(u.id)}" data-active="${u.active}"
           class="text-xs ${u.active ? 'text-red-600' : 'text-teal-700'}">
           ${u.active ? 'Disable' : 'Enable'}</button>
       </td>
@@ -560,18 +565,18 @@ async function renderTab() {
     try { await api('createStudent', Object.fromEntries(f.entries())); await renderAdmin(); }
     catch (err) { alert(err.message); btn.innerText = 'Add student'; btn.disabled = false; }
   };
-  body.querySelectorAll('[data-del-class]').forEach(b =>
-    b.onclick = async () => { if (confirm('Delete class?')) { await api('deleteClass', { id: b.dataset.delClass }); renderAdmin(); } });
-  body.querySelectorAll('[data-del-subject]').forEach(b =>
-    b.onclick = async () => { if (confirm('Delete subject?')) { await api('deleteSubject', { id: b.dataset.delSubject }); renderAdmin(); } });
-  body.querySelectorAll('[data-del-teacher]').forEach(b =>
-    b.onclick = async () => { if (confirm('Delete teacher?')) { await api('deleteTeacher', { id: b.dataset.delTeacher }); renderAdmin(); } });
-  body.querySelectorAll('[data-del-student]').forEach(b =>
-    b.onclick = async () => { if (confirm('Delete student?')) { await api('deleteStudent', { id: b.dataset.delStudent }); renderAdmin(); } });
-  body.querySelectorAll('[data-toggle-user]').forEach(b =>
-    b.onclick = async () => { await api('toggleUser', {
-      id: b.dataset.toggleUser, active: b.dataset.active !== 'true'
-    }); renderAdmin(); });
+  body.querySelectorAll('[data-del-class]').forEach(b => b.onclick = () => runAdminAction(b, 'deleteClass', { id: b.dataset.delClass }, 'Delete this class?'));
+  body.querySelectorAll('[data-del-subject]').forEach(b => b.onclick = () => runAdminAction(b, 'deleteSubject', { id: b.dataset.delSubject }, 'Delete this subject?'));
+  body.querySelectorAll('[data-del-teacher]').forEach(b => b.onclick = () => runAdminAction(b, 'deleteTeacher', { id: b.dataset.delTeacher }, 'Delete this teacher?'));
+  body.querySelectorAll('[data-del-student]').forEach(b => b.onclick = () => runAdminAction(b, 'deleteStudent', { id: b.dataset.delStudent }, 'Delete this student?'));
+  body.querySelectorAll('[data-toggle-user]').forEach(b => b.onclick = () => runAdminAction(b, 'toggleUser', { id: b.dataset.toggleUser, active: b.dataset.active !== 'true' }, 'Change this user’s access?'));
+}
+
+async function runAdminAction(button, action, payload, message) {
+  if (!confirm(message)) return;
+  const oldText = button.textContent; button.disabled = true; button.textContent = 'Please wait…';
+  try { await api(action, payload); await renderAdmin(); }
+  catch (error) { alert(error.message); button.disabled = false; button.textContent = oldText; }
 }
 
 /* ==========================================
@@ -586,7 +591,7 @@ async function renderTeacher() {
   const smap = Object.fromEntries(subjects.map(s => [s.id, s.name]));
 
   const assignOpts = (teacher.assignments || []).map(a => 
-    `<option value="${a.classId}|${a.subjectId}">${esc(cmap[a.classId] || '?')} — ${esc(smap[a.subjectId] || '?')}</option>`
+    `<option value="${esc(JSON.stringify([a.classId, a.subjectId]))}">${esc(cmap[a.classId] || '?')} — ${esc(smap[a.subjectId] || '?')}</option>`
   ).join('');
 
   const logRows = logs.map(l => `
@@ -618,7 +623,7 @@ async function renderTeacher() {
           </div>
           <div>
             <label class="block text-sm mb-1">Date</label>
-            <input name="date" type="date" required class="input w-full" value="${new Date().toISOString().split('T')[0]}" />
+            <input name="date" type="date" required class="input w-full" value="${localDateISO()}" />
           </div>
           <div>
             <label class="block text-sm mb-1">Homework Due Date (optional)</label>
@@ -664,7 +669,7 @@ async function renderTeacher() {
     fLog.onsubmit = async e => {
       e.preventDefault();
       const f = new FormData(fLog);
-      const [classId, subjectId] = f.get('assignment').split('|');
+      const [classId, subjectId] = JSON.parse(f.get('assignment'));
       const btn = fLog.querySelector('button');
       btn.innerText = 'Saving to Drive...'; btn.disabled = true;
 
