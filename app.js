@@ -1,4 +1,4 @@
-const API_URL   = 'PASTE_API_URL_HERE';
+const API_URL   = 'https://script.google.com/macros/s/AKfycbzwBRVOPgkFz7uWuE1alH9PfU9G1XCi5bPMMFXFzz8CWBbAF5safm8EAcGC73sX00k/exec';
 const CLIENT_ID = '624013566184-6k4pjjk80rdhuo341270slup4e6sm0sa.apps.googleusercontent.com';
 
 const $ = s => document.querySelector(s);
