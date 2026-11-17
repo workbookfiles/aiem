@@ -9,6 +9,15 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g,
 let ID_TOKEN = sessionStorage.getItem('idtoken') || null;
 const state = { user: null, data: null, tab: 'classes' };
 
+// --- LOADING SCREEN HELPER ---
+function showLoading() {
+  app.innerHTML = `
+    <div class="flex flex-col items-center justify-center mt-32">
+      <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-teal-700 mb-4"></div>
+      <p class="text-slate-500">Loading data from Google Drive...</p>
+    </div>`;
+}
+
 async function api(action, payload = {}) {
   const res = await fetch(API_URL, {
     method: 'POST',
@@ -33,6 +42,7 @@ async function onSignIn(r) {
 }
 
 async function boot() {
+  showLoading();
   try {
     const who = await api('whoami');
     state.user = who.user;
@@ -47,11 +57,11 @@ async function boot() {
 
 function renderLogin(error) {
   app.innerHTML = `
-    <div class="max-w-md mx-auto bg-white rounded-2xl shadow p-8 mt-16">
+    <div class="max-w-md mx-auto bg-white rounded-2xl shadow p-8 mt-16 text-center">
       <h1 class="text-xl font-semibold mb-1">Alamdar Institute of Education Hamray</h1>
       <p class="text-sm text-slate-500 mb-6">Sign in with your school Google account.</p>
       ${error ? `<p class="text-sm text-red-600 mb-4">${esc(error)}</p>` : ''}
-      <div id="gbtn"></div>
+      <div id="gbtn" class="flex justify-center"></div>
     </div>`;
   google.accounts.id.renderButton($('#gbtn'), { theme: 'filled_blue', size: 'large', width: 320 });
 }
@@ -69,6 +79,7 @@ function renderNotice(msg) {
    TEACHER DASHBOARD
    ========================================== */
 async function renderTeacher() {
+  showLoading();
   state.data = await api('getTeacherData');
   const { teacher, classes, subjects, logs } = state.data;
   
@@ -156,7 +167,7 @@ async function renderTeacher() {
       const f = new FormData(fLog);
       const [classId, subjectId] = f.get('assignment').split('|');
       const btn = fLog.querySelector('button');
-      btn.innerText = 'Submitting...'; btn.disabled = true;
+      btn.innerText = 'Saving to Drive...'; btn.disabled = true;
 
       try {
         await api('submitLog', {
@@ -176,10 +187,12 @@ async function renderTeacher() {
 }
 
 /* ==========================================
-   ADMIN DASHBOARD (No changes below this line)
+   ADMIN DASHBOARD
    ========================================== */
 async function renderAdmin() {
+  showLoading(); // <--- Show spinner while fetching admin data
   state.data = await api('listAll');
+  
   app.innerHTML = `
     <div class="max-w-6xl mx-auto px-4">
       <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
@@ -353,37 +366,42 @@ function renderTab() {
   const fClass = $('#f-class');
   if (fClass) fClass.onsubmit = async e => {
     e.preventDefault(); const f = new FormData(fClass);
+    const btn = fClass.querySelector('button'); btn.innerText = 'Saving...'; btn.disabled = true;
     try { await api('createClass', { name: f.get('name'), section: f.get('section') }); await renderAdmin(); }
-    catch (err) { alert(err.message); }
+    catch (err) { alert(err.message); btn.innerText = 'Add class'; btn.disabled = false; }
   };
   const fSubject = $('#f-subject');
   if (fSubject) fSubject.onsubmit = async e => {
     e.preventDefault(); const f = new FormData(fSubject);
+    const btn = fSubject.querySelector('button'); btn.innerText = 'Saving...'; btn.disabled = true;
     try { await api('createSubject', { name: f.get('name') }); await renderAdmin(); }
-    catch (err) { alert(err.message); }
+    catch (err) { alert(err.message); btn.innerText = 'Add subject'; btn.disabled = false; }
   };
   const fTeacher = $('#f-teacher');
   if (fTeacher) fTeacher.onsubmit = async e => {
     e.preventDefault(); const f = new FormData(fTeacher);
+    const btn = fTeacher.querySelector('button'); btn.innerText = 'Saving...'; btn.disabled = true;
     try { await api('createTeacher', {
       name: f.get('name'), email: f.get('email'),
       phone: f.get('phone'), qualifications: f.get('qualifications')
     }); await renderAdmin(); }
-    catch (err) { alert(err.message); }
+    catch (err) { alert(err.message); btn.innerText = 'Add teacher'; btn.disabled = false; }
   };
   const fAssign = $('#f-assign');
   if (fAssign) fAssign.onsubmit = async e => {
     e.preventDefault(); const f = new FormData(fAssign);
+    const btn = fAssign.querySelector('button'); btn.innerText = 'Assigning...'; btn.disabled = true;
     try { await api('assignTeacher', {
       teacherId: f.get('teacherId'), classId: f.get('classId'), subjectId: f.get('subjectId')
     }); await renderAdmin(); }
-    catch (err) { alert(err.message); }
+    catch (err) { alert(err.message); btn.innerText = 'Assign'; btn.disabled = false; }
   };
   const fStudent = $('#f-student');
   if (fStudent) fStudent.onsubmit = async e => {
     e.preventDefault(); const f = new FormData(fStudent);
+    const btn = fStudent.querySelector('button'); btn.innerText = 'Saving...'; btn.disabled = true;
     try { await api('createStudent', Object.fromEntries(f.entries())); await renderAdmin(); }
-    catch (err) { alert(err.message); }
+    catch (err) { alert(err.message); btn.innerText = 'Add student'; btn.disabled = false; }
   };
   body.querySelectorAll('[data-del-class]').forEach(b =>
     b.onclick = async () => { if (confirm('Delete class?')) { await api('deleteClass', { id: b.dataset.delClass }); renderAdmin(); } });
