@@ -84,15 +84,14 @@ function write_(name, records) {
 
 function deleteById_(collection, id) {
   if (!id || typeof id !== 'string') throw new Error('A valid record ID is required.');
-  return withDataLock_(function () {
-    const records = read_(collection) || [];
-    const next = records.filter(function (record) {
-      return record && record.id !== id;
-    });
-    const deleted = records.length - next.length;
-    if (deleted) write_(collection, next);
-    return { deleted: deleted };
+  // Caller must wrap the complete route in withDataLock_().
+  const records = read_(collection) || [];
+  const next = records.filter(function (record) {
+    return record && record.id !== id;
   });
+  const deleted = records.length - next.length;
+  if (deleted) write_(collection, next);
+  return { deleted: deleted };
 }
 
 function uuid_() {
