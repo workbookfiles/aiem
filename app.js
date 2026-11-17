@@ -37,7 +37,8 @@ async function boot() {
     const who = await api('whoami');
     state.user = who.user;
     if (state.user.role === 'admin') await renderAdmin();
-    else renderNotice('Signed in as ' + state.user.role + '. Dashboard coming in Phase 2.');
+    else if (state.user.role === 'teacher') await renderTeacher();
+    else renderNotice('Signed in as ' + state.user.role + '. Parent portal coming in Phase 3.');
   } catch (e) {
     sessionStorage.removeItem('idtoken'); ID_TOKEN = null;
     renderLogin(e.message);
@@ -47,24 +48,136 @@ async function boot() {
 function renderLogin(error) {
   app.innerHTML = `
     <div class="max-w-md mx-auto bg-white rounded-2xl shadow p-8 mt-16">
-     <h1 class="text-xl font-semibold mb-1">Alamdar Institute of Education Hamray</h1>
+      <h1 class="text-xl font-semibold mb-1">Alamdar Institute of Education Hamray</h1>
       <p class="text-sm text-slate-500 mb-6">Sign in with your school Google account.</p>
       ${error ? `<p class="text-sm text-red-600 mb-4">${esc(error)}</p>` : ''}
       <div id="gbtn"></div>
     </div>`;
-  google.accounts.id.renderButton($('#gbtn'),
-    { theme: 'filled_blue', size: 'large', width: 320 });
+  google.accounts.id.renderButton($('#gbtn'), { theme: 'filled_blue', size: 'large', width: 320 });
 }
 
 function renderNotice(msg) {
   app.innerHTML = `
-    <div class="max-w-md mx-auto bg-white rounded-2xl shadow p-8 mt-16">
+    <div class="max-w-md mx-auto bg-white rounded-2xl shadow p-8 mt-16 text-center">
       <p class="mb-4">${esc(msg)}</p>
       <button id="logout" class="btn">Sign out</button>
     </div>`;
   $('#logout').onclick = () => { sessionStorage.removeItem('idtoken'); location.reload(); };
 }
 
+/* ==========================================
+   TEACHER DASHBOARD
+   ========================================== */
+async function renderTeacher() {
+  state.data = await api('getTeacherData');
+  const { teacher, classes, subjects, logs } = state.data;
+  
+  const cmap = Object.fromEntries(classes.map(c => [c.id, c.name + (c.section ? ' · ' + c.section : '')]));
+  const smap = Object.fromEntries(subjects.map(s => [s.id, s.name]));
+
+  const assignOpts = (teacher.assignments || []).map(a => 
+    `<option value="${a.classId}|${a.subjectId}">${esc(cmap[a.classId] || '?')} — ${esc(smap[a.subjectId] || '?')}</option>`
+  ).join('');
+
+  const logRows = logs.map(l => `
+    <tr class="border-t">
+      <td class="whitespace-nowrap">${esc(l.date)}</td>
+      <td>${esc(cmap[l.classId] || '?')}<br><span class="text-xs text-slate-500">${esc(smap[l.subjectId] || '?')}</span></td>
+      <td class="max-w-xs whitespace-pre-wrap">${esc(l.classwork || '—')}</td>
+      <td class="max-w-xs whitespace-pre-wrap">${esc(l.homework || '—')}</td>
+      <td class="whitespace-nowrap">${esc(l.dueDate || '—')}</td>
+    </tr>`).join('');
+
+  app.innerHTML = `
+    <div class="max-w-6xl mx-auto px-4 pb-12">
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-6">
+        <div>
+          <h1 class="text-xl font-semibold">Teacher Dashboard</h1>
+          <p class="text-sm text-slate-500">Welcome, ${esc(teacher.name)}</p>
+        </div>
+        <button id="logout" class="px-3 py-1.5 rounded-lg bg-slate-200 hover:bg-slate-300 text-sm">Sign out</button>
+      </div>
+
+      <div class="bg-white rounded-xl shadow p-4 mb-6">
+        <h3 class="font-medium mb-3 text-teal-800">Submit Daily Class Log</h3>
+        ${assignOpts ? `
+        <form id="f-log" class="grid md:grid-cols-2 gap-4">
+          <div class="md:col-span-2">
+            <label class="block text-sm mb-1">Class & Subject</label>
+            <select name="assignment" required class="input w-full">${assignOpts}</select>
+          </div>
+          <div>
+            <label class="block text-sm mb-1">Date</label>
+            <input name="date" type="date" required class="input w-full" value="${new Date().toISOString().split('T')[0]}" />
+          </div>
+          <div>
+            <label class="block text-sm mb-1">Homework Due Date (optional)</label>
+            <input name="dueDate" type="date" class="input w-full" />
+          </div>
+          <div>
+            <label class="block text-sm mb-1">Classwork Done</label>
+            <textarea name="classwork" required rows="3" class="input w-full" placeholder="What was taught in class..."></textarea>
+          </div>
+          <div>
+            <label class="block text-sm mb-1">Homework Given</label>
+            <textarea name="homework" rows="3" class="input w-full" placeholder="What homework was assigned..."></textarea>
+          </div>
+          <div class="md:col-span-2">
+            <button class="btn w-full md:w-auto">Submit Log</button>
+          </div>
+        </form>
+        ` : '<p class="text-red-500 text-sm">You have no classes assigned yet. Please contact the Admin.</p>'}
+      </div>
+
+      <div class="bg-white rounded-xl shadow overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-slate-100 text-left">
+            <tr>
+              <th>Date</th>
+              <th>Class & Subject</th>
+              <th>Classwork</th>
+              <th>Homework</th>
+              <th>Due Date</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${logRows || '<tr><td colspan="5" class="text-center py-6 text-slate-400">No logs submitted yet</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+
+  $('#logout').onclick = () => { sessionStorage.removeItem('idtoken'); location.reload(); };
+
+  const fLog = $('#f-log');
+  if (fLog) {
+    fLog.onsubmit = async e => {
+      e.preventDefault();
+      const f = new FormData(fLog);
+      const [classId, subjectId] = f.get('assignment').split('|');
+      const btn = fLog.querySelector('button');
+      btn.innerText = 'Submitting...'; btn.disabled = true;
+
+      try {
+        await api('submitLog', {
+          classId, subjectId,
+          date: f.get('date'),
+          classwork: f.get('classwork'),
+          homework: f.get('homework'),
+          dueDate: f.get('dueDate')
+        });
+        await renderTeacher(); // Reload the page to show the new log
+      } catch (err) {
+        alert(err.message);
+        btn.innerText = 'Submit Log'; btn.disabled = false;
+      }
+    };
+  }
+}
+
+/* ==========================================
+   ADMIN DASHBOARD (No changes below this line)
+   ========================================== */
 async function renderAdmin() {
   state.data = await api('listAll');
   app.innerHTML = `
