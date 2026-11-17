@@ -43,7 +43,7 @@ window.addEventListener('load', function init() {
       if (ID_TOKEN) boot(); else renderLogin();
       return;
     }
-    if (++attempts >= 40) { renderLogin('Google sign-in did not load. Check your connection, refresh the page, and try again.'); return; }
+    if (++attempts >= 40) { renderGoogleUnavailable(); return; }
     setTimeout(connectGoogle, Math.min(250 * attempts, 1500));
   };
   connectGoogle();
@@ -76,9 +76,14 @@ function renderLogin(error) {
       ${error ? `<p class="text-sm text-red-600 mb-4">${esc(error)}</p>` : ''}
       <div id="gbtn" class="flex justify-center"></div>
     </div>`;
-  google.accounts.id.renderButton($('#gbtn'), { theme: 'filled_blue', size: 'large', width: 320 });
+  if (window.google?.accounts?.id) google.accounts.id.renderButton($('#gbtn'), { theme: 'filled_blue', size: 'large', width: 320 });
+  else $('#gbtn').innerHTML = '<p class="text-sm text-slate-500">Google sign-in is temporarily unavailable. Refresh this page to try again.</p>';
 }
 
+function renderGoogleUnavailable() {
+  app.innerHTML = `<div class="max-w-md mx-auto bg-white rounded-2xl shadow p-8 mt-16 text-center"><h1 class="text-xl font-semibold mb-2">Alamdar Edu. Inst. Hamray</h1><p class="text-sm text-red-600 mb-5">Google sign-in could not load. Check your internet connection and refresh the page.</p><button id="retry-google" class="btn">Refresh page</button></div>`;
+  $('#retry-google').onclick = () => location.reload();
+}
 function renderAuthError(message) {
   app.innerHTML = `<div class="max-w-md mx-auto bg-white rounded-2xl shadow p-8 mt-16 text-center"><h1 class="text-xl font-semibold mb-2">Alamdar Edu. Inst. Hamray</h1><p class="text-sm text-red-600 mb-5">${esc(message)}</p><div class="flex justify-center gap-2"><button id="retry" class="btn">Try again</button><button id="signout" class="px-3 py-2 rounded-lg bg-slate-200 text-sm">Sign out</button></div></div>`;
   $('#retry').onclick = boot;
