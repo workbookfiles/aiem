@@ -1,0 +1,7 @@
+.input { padding: .5rem .75rem; border: 1px solid #cbd5e1; border-radius: .5rem;
+         font-size: .875rem; min-width: 12rem; background: #fff; }
+.input:focus { outline: 2px solid #0f766e33; border-color: #0f766e; }
+.btn { padding: .5rem .9rem; background: #0f766e; color: #fff;
+       border-radius: .5rem; font-size: .875rem; }
+.btn:hover { background: #115e59; }
+table td, table th { padding: .5rem .6rem; }
