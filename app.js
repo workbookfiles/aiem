@@ -1,10 +1,11 @@
+import { escapeHtml, csvCell, localDateISO } from './utils.js';
+
 const API_URL   = 'https://script.google.com/macros/s/AKfycbzwBRVOPgkFz7uWuE1alH9PfU9G1XCi5bPMMFXFzz8CWBbAF5safm8EAcGC73sX00k/exec';
 const CLIENT_ID = '624013566184-6k4pjjk80rdhuo341270slup4e6sm0sa.apps.googleusercontent.com';
 
 const $ = s => document.querySelector(s);
 const app = $('#app');
-const esc = s => String(s ?? '').replace(/[&<>"']/g,
-  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const esc = escapeHtml;
 
 let ID_TOKEN = sessionStorage.getItem('idtoken') || null;
 const state = { user: null, data: null, tab: 'classes' };
@@ -18,21 +19,35 @@ function showLoading() {
 }
 
 async function api(action, payload = {}) {
-  const res = await fetch(API_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify({ action, token: ID_TOKEN, ...payload })
-  });
-  const j = await res.json();
-  if (!j.ok) throw new Error(j.error);
-  return j.data;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20000);
+  try {
+    const res = await fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action, token: ID_TOKEN, ...payload }), signal: controller.signal });
+    if (!res.ok) throw new Error(`Server returned HTTP ${res.status}. Please try again.`);
+    let j;
+    try { j = await res.json(); } catch { throw new Error('The server returned an invalid response. Please try again.'); }
+    if (!j || j.ok !== true) throw new Error(j?.error || 'The request could not be completed.');
+    return j.data;
+  } catch (error) {
+    if (error.name === 'AbortError') throw new Error('The request timed out. Check your connection and try again.');
+    if (error instanceof TypeError) throw new Error('Network error. Check your internet connection and try again.');
+    throw error;
+  } finally { clearTimeout(timeout); }
 }
 
-window.onload = function init() {
-  if (!window.google || !google.accounts) { setTimeout(init, 300); return; }
-  google.accounts.id.initialize({ client_id: CLIENT_ID, callback: onSignIn });
-  if (ID_TOKEN) boot(); else renderLogin();
-};
+window.addEventListener('load', function init() {
+  let attempts = 0;
+  const connectGoogle = () => {
+    if (window.google?.accounts?.id) {
+      google.accounts.id.initialize({ client_id: CLIENT_ID, callback: onSignIn });
+      if (ID_TOKEN) boot(); else renderLogin();
+      return;
+    }
+    if (++attempts >= 40) { renderGoogleUnavailable(); return; }
+    setTimeout(connectGoogle, Math.min(250 * attempts, 1500));
+  };
+  connectGoogle();
+});
 
 async function onSignIn(r) {
   ID_TOKEN = r.credential;
@@ -49,22 +64,31 @@ async function boot() {
     else if (state.user.role === 'teacher') await renderTeacher();
     else renderNotice('Signed in as ' + state.user.role + '.');
   } catch (e) {
-    sessionStorage.removeItem('idtoken'); ID_TOKEN = null;
-    renderLogin(e.message);
+    renderAuthError(e.message);
   }
 }
 
 function renderLogin(error) {
   app.innerHTML = `
     <div class="max-w-md mx-auto bg-white rounded-2xl shadow p-8 mt-16 text-center">
-      <h1 class="text-xl font-semibold mb-1">Alamdar Institute of Education Hamray</h1>
+      <h1 class="text-xl font-semibold mb-1">Alamdar Edu. Inst. Hamray</h1>
       <p class="text-sm text-slate-500 mb-6">Sign in with your school Google account.</p>
       ${error ? `<p class="text-sm text-red-600 mb-4">${esc(error)}</p>` : ''}
       <div id="gbtn" class="flex justify-center"></div>
     </div>`;
-  google.accounts.id.renderButton($('#gbtn'), { theme: 'filled_blue', size: 'large', width: 320 });
+  if (window.google?.accounts?.id) google.accounts.id.renderButton($('#gbtn'), { theme: 'filled_blue', size: 'large', width: 320 });
+  else $('#gbtn').innerHTML = '<p class="text-sm text-slate-500">Google sign-in is temporarily unavailable. Refresh this page to try again.</p>';
 }
 
+function renderGoogleUnavailable() {
+  app.innerHTML = `<div class="max-w-md mx-auto bg-white rounded-2xl shadow p-8 mt-16 text-center"><h1 class="text-xl font-semibold mb-2">Alamdar Edu. Inst. Hamray</h1><p class="text-sm text-red-600 mb-5">Google sign-in could not load. Check your internet connection and refresh the page.</p><button id="retry-google" class="btn">Refresh page</button></div>`;
+  $('#retry-google').onclick = () => location.reload();
+}
+function renderAuthError(message) {
+  app.innerHTML = `<div class="max-w-md mx-auto bg-white rounded-2xl shadow p-8 mt-16 text-center"><h1 class="text-xl font-semibold mb-2">Alamdar Edu. Inst. Hamray</h1><p class="text-sm text-red-600 mb-5">${esc(message)}</p><div class="flex justify-center gap-2"><button id="retry" class="btn">Try again</button><button id="signout" class="px-3 py-2 rounded-lg bg-slate-200 text-sm">Sign out</button></div></div>`;
+  $('#retry').onclick = boot;
+  $('#signout').onclick = () => { sessionStorage.removeItem('idtoken'); ID_TOKEN = null; google.accounts.id.disableAutoSelect(); renderLogin(); };
+}
 function renderNotice(msg) {
   app.innerHTML = `
     <div class="max-w-md mx-auto bg-white rounded-2xl shadow p-8 mt-16 text-center">
@@ -136,7 +160,7 @@ function tabClasses() {
       <td>${esc(c.name)}</td>
       <td>${esc(c.section || '—')}</td>
       <td>${d.students.filter(s => s.classId === c.id).length}</td>
-      <td class="text-right"><button data-del-class="${c.id}" class="text-red-600 text-xs">Delete</button></td>
+      <td class="text-right"><button data-del-class="${esc(c.id)}" class="text-red-600 text-xs">Delete</button></td>
     </tr>`);
   return card('Add class', `
       <form id="f-class" class="flex flex-wrap gap-2">
@@ -152,7 +176,7 @@ function tabSubjects() {
   const rows = d.subjects.map(s => `
     <tr class="border-t">
       <td>${esc(s.name)}</td>
-      <td class="text-right"><button data-del-subject="${s.id}" class="text-red-600 text-xs">Delete</button></td>
+      <td class="text-right"><button data-del-subject="${esc(s.id)}" class="text-red-600 text-xs">Delete</button></td>
     </tr>`);
   return card('Add subject', `
       <form id="f-subject" class="flex flex-wrap gap-2">
@@ -175,12 +199,12 @@ function tabTeachers() {
         <td>${esc(t.name)}</td>
         <td>${esc(t.email || '—')}<div class="text-xs text-slate-500">${esc(t.phone || '')}</div></td>
         <td>${tags}</td>
-        <td class="text-right"><button data-del-teacher="${t.id}" class="text-red-600 text-xs">Delete</button></td>
+        <td class="text-right"><button data-del-teacher="${esc(t.id)}" class="text-red-600 text-xs">Delete</button></td>
       </tr>`;
   });
-  const teacherOpts = d.teachers.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('');
-  const classOpts   = d.classes.map(c => `<option value="${c.id}">${esc(c.name)}${c.section?' · '+esc(c.section):''}</option>`).join('');
-  const subjectOpts = d.subjects.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
+  const teacherOpts = d.teachers.map(t => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('');
+  const classOpts   = d.classes.map(c => `<option value="${esc(c.id)}">${esc(c.name)}${c.section?' · '+esc(c.section):''}</option>`).join('');
+  const subjectOpts = d.subjects.map(s => `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('');
   return card('Add teacher', `
       <form id="f-teacher" class="grid md:grid-cols-4 gap-2">
         <input name="name" required placeholder="Full name" class="input" />
@@ -208,7 +232,7 @@ function tabStudents() {
       <td>${esc(cmap[s.classId] || '—')}</td>
       <td>${esc(s.parentName || '—')}<div class="text-xs text-slate-500">${esc(s.parentPhone || '')}</div></td>
       <td>${esc(s.parentEmail || '—')}</td>
-      <td class="text-right"><button data-del-student="${s.id}" class="text-red-600 text-xs">Delete</button></td>
+      <td class="text-right"><button data-del-student="${esc(s.id)}" class="text-red-600 text-xs">Delete</button></td>
     </tr>`);
   const classOpts = d.classes.map(c => `<option value="${c.id}">${esc(c.name)}${c.section?' · '+esc(c.section):''}</option>`).join('');
   return card('Add student', `
@@ -252,164 +276,86 @@ function generateReportData(logs, cmap, smap, date) {
 function downloadImage(report) {
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
-  canvas.width = 800;
-  
-  // Calculate height based on content
-  let y = 20;
-  ctx.font = '24px bold Arial';
-  const title = "Alamdar Institute of Education Hamray";
-  const dateText = "Daily Homework Report - " + report.date;
-  
-  let totalLines = 2; // Title + Date
-  Object.keys(report.grouped).forEach(cls => {
-    totalLines += 1; // Class Header
-    report.grouped[cls].forEach(sub => {
-      totalLines += 1; // Subject
-      totalLines += Math.ceil((sub.classwork.length + 20) / 70);
-      totalLines += Math.ceil((sub.homework.length + 20) / 70);
-      if(sub.dueDate) totalLines += 1;
-      totalLines += 1; // Spacing
-    });
-  });
-
-  canvas.height = Math.max(400, totalLines * 24 + 100);
-
-  // Draw Background
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  // Draw Header Background
-  ctx.fillStyle = '#0f766e';
-  ctx.fillRect(0, 0, canvas.width, 80);
-
-  // Draw Title
-  ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 28px Arial';
-  ctx.textAlign = 'center';
-  ctx.fillText(title, canvas.width/2, 35);
-  
-  ctx.font = '18px Arial';
-  ctx.fillText(dateText, canvas.width/2, 60);
-
-  // Draw Body
-  ctx.textAlign = 'left';
-  y = 120;
-  
-  Object.keys(report.grouped).forEach(cls => {
-    ctx.fillStyle = '#0f766e';
-    ctx.font = 'bold 22px Arial';
-    ctx.fillText('Class: ' + cls, 40, y);
-    y += 30;
-
-    report.grouped[cls].forEach(sub => {
-      ctx.fillStyle = '#1e293b';
-      ctx.font = 'bold 18px Arial';
-      ctx.fillText('Subject: ' + sub.subject, 60, y);
-      y += 25;
-
-      ctx.font = '16px Arial';
-      ctx.fillStyle = '#334155';
-      
-      // Wrap text for Classwork
-      ctx.fillText('Classwork Done: ', 80, y);
-      const cwX = 80 + ctx.measureText('Classwork Done: ').width;
-      wrapText(ctx, sub.classwork, cwX, y, 680, 20);
-      y += Math.ceil((sub.classwork.length + 20) / 70) * 20;
-
-      // Wrap text for Homework
-      ctx.fillText('Homework Given: ', 80, y);
-      const hwX = 80 + ctx.measureText('Homework Given: ').width;
-      wrapText(ctx, sub.homework, hwX, y, 680, 20);
-      y += Math.ceil((sub.homework.length + 20) / 70) * 20;
-
-      if(sub.dueDate) {
-        ctx.fillStyle = '#dc2626';
-        ctx.fillText('Due Date: ' + sub.dueDate, 80, y);
-        y += 20;
-      }
-      y += 15; // Spacing between subjects
-    });
-    y += 10; // Spacing between classes
-  });
-
-  // Footer
-  ctx.fillStyle = '#94a3b8';
-  ctx.font = '12px Arial';
-  ctx.textAlign = 'center';
-  ctx.fillText('Generated by AIEM Portal', canvas.width/2, canvas.height - 20);
-
-  // Share or Download
-  canvas.toBlob(blob => {
-    const file = new File([blob], `AIEM_Report_${report.date}.png`, { type: 'image/png' });
-    if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      navigator.share({
-        files: [file],
-        title: 'AIEM Daily Report',
-        text: 'Here is the daily homework report.'
-      });
-    } else {
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `AIEM_Report_${report.date}.png`;
-      a.click();
-      URL.revokeObjectURL(url);
+  if (!ctx) { alert('Image export is unavailable in this browser.'); return; }
+  canvas.width = 1000;
+  const content = [];
+  ctx.font = '16px Arial';
+  const addWrapped = (text, indent, color, font, gap = 0) => {
+    ctx.font = font;
+    const words = String(text ?? '').split(/\\s+/);
+    const lines = []; let line = '';
+    for (const word of words) {
+      const candidate = line ? line + ' ' + word : word;
+      if (line && ctx.measureText(candidate).width > canvas.width - indent - 50) { lines.push(line); line = word; }
+      else line = candidate;
     }
-  });
-}
-
-function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
-  const words = text.split(' ');
-  let line = '';
-  for(let n = 0; n < words.length; n++) {
-    const testLine = line + words[n] + ' ';
-    const metrics = ctx.measureText(testLine);
-    if (metrics.width > maxWidth && n > 0) {
-      ctx.fillText(line, x, y);
-      line = words[n] + ' ';
-      y += lineHeight;
-      x = 80; // reset to original X
-    } else {
-      line = testLine;
+    if (line) lines.push(line);
+    content.push({ lines, indent, color, font, gap });
+  };
+  addWrapped('Alamdar Edu. Inst. Hamray', 0, '#ffffff', 'bold 28px Arial', 4);
+  addWrapped('Daily Homework Report - ' + report.date, 0, '#ffffff', '18px Arial', 20);
+  for (const cls of Object.keys(report.grouped)) {
+    addWrapped('Class: ' + cls, 40, '#0f766e', 'bold 22px Arial', 8);
+    for (const sub of report.grouped[cls]) {
+      addWrapped('Subject: ' + sub.subject, 60, '#1e293b', 'bold 18px Arial', 4);
+      addWrapped('Classwork Done: ' + (sub.classwork || '—'), 80, '#334155', '16px Arial', 2);
+      addWrapped('Homework Given: ' + (sub.homework || '—'), 80, '#334155', '16px Arial', 2);
+      if (sub.dueDate) addWrapped('Due Date: ' + sub.dueDate, 80, '#dc2626', '16px Arial', 12);
+      else content.push({ lines: [], indent: 0, color: '#334155', font: '16px Arial', gap: 12 });
     }
   }
-  ctx.fillText(line, x, y);
+  const lineHeight = 23;
+  const bodyHeight = content.reduce((sum, item) => sum + item.lines.length * lineHeight + item.gap, 0);
+  canvas.height = Math.max(260, 100 + bodyHeight + 40);
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#0f766e'; ctx.fillRect(0, 0, canvas.width, 90);
+  let y = 42;
+  for (const item of content) {
+    ctx.font = item.font; ctx.fillStyle = item.color; ctx.textAlign = item.indent === 0 ? 'center' : 'left';
+    for (const line of item.lines) {
+      ctx.fillText(line, item.indent === 0 ? canvas.width / 2 : item.indent, y);
+      y += lineHeight;
+    }
+    y += item.gap;
+  }
+  ctx.fillStyle = '#94a3b8'; ctx.font = '12px Arial'; ctx.textAlign = 'center';
+  ctx.fillText('Generated by Alamdar Edu. Inst. Hamray', canvas.width / 2, canvas.height - 18);
+  canvas.toBlob(blob => {
+    if (!blob) { alert('Could not create the report image. Please try again.'); return; }
+    const file = new File([blob], `Alamdar_Edu_Report_${report.date}.png`, { type: 'image/png' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      navigator.share({ files: [file], title: 'Alamdar Edu Daily Report', text: 'Here is the daily homework report.' })
+        .catch(error => { if (error.name !== 'AbortError') alert('Sharing failed. Please download the report instead.'); });
+    } else {
+      const url = URL.createObjectURL(blob); const a = document.createElement('a');
+      a.href = url; a.download = file.name; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+  }, 'image/png');
 }
 
 function downloadCSV(logs, cmap, smap, date) {
   const dailyLogs = logs.filter(l => l.date === date);
-  let csv = "Class,Subject,Classwork Done,Homework Given,Due Date\n";
-  
-  dailyLogs.forEach(l => {
-    const cls = `"${cmap[l.classId] || ''}"`;
-    const sub = `"${smap[l.subjectId] || ''}"`;
-    const cw = `"${(l.classwork || '').replace(/"/g, '""')}"`;
-    const hw = `"${(l.homework || '').replace(/"/g, '""')}"`;
-    const due = `"${l.dueDate || ''}"`;
-    csv += `${cls},${sub},${cw},${hw},${due}\n`;
-  });
-
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `AIEM_Logs_${date}.csv`;
-  a.click();
+  const rows = [['Class','Subject','Classwork Done','Homework Given','Due Date'].map(csvCell).join(','),
+    ...dailyLogs.map(l => [cmap[l.classId] || '', smap[l.subjectId] || '', l.classwork || '', l.homework || '', l.dueDate || ''].map(csvCell).join(','))];
+  const blob = new Blob([rows.join('\r\n') + '\r\n'], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob); const a = document.createElement('a');
+  a.href = url; a.download = `Alamdar_Edu_Logs_${date}.csv`; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-
 function downloadWord(report) {
   let html = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>`;
   html += `<head><meta charset='utf-8'><title>Daily Report</title><style>body { font-family: Arial; } h1 { text-align: center; color: #0f766e; } h2 { color: #0f766e; border-bottom: 1px solid #ccc; } h3 { margin-bottom: 5px; } p { margin-top: 5px; }</style></head><body>`;
-  html += `<h1>Alamdar Institute of Education Hamray</h1>`;
-  html += `<h2 style="text-align:center; border:none;">Daily Report: ${report.date}</h2>`;
+  html += `<h1>Alamdar Edu. Inst. Hamray</h1>`;
+  html += `<h2 style="text-align:center; border:none;">Daily Report: ${esc(report.date)}</h2>`;
   
   Object.keys(report.grouped).forEach(cls => {
-    html += `<h2>Class: ${cls}</h2>`;
+    html += `<h2>Class: ${esc(cls)}</h2>`;
     report.grouped[cls].forEach(sub => {
-      html += `<h3>Subject: ${sub.subject}</h3>`;
-      html += `<p><strong>Classwork Done:</strong> ${sub.classwork}</p>`;
-      html += `<p><strong>Homework Given:</strong> ${sub.homework}</p>`;
-      if(sub.dueDate) html += `<p><strong>Due Date:</strong> ${sub.dueDate}</p>`;
+      html += `<h3>Subject: ${esc(sub.subject)}</h3>`;
+      html += `<p><strong>Classwork Done:</strong> ${esc(sub.classwork)}</p>`;
+      html += `<p><strong>Homework Given:</strong> ${esc(sub.homework)}</p>`;
+      if(sub.dueDate) html += `<p><strong>Due Date:</strong> ${esc(sub.dueDate)}</p>`;
       html += `<hr/>`;
     });
   });
@@ -419,8 +365,9 @@ function downloadWord(report) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `AIEM_Report_${report.date}.doc`;
+  a.download = `Alamdar_Edu_Report_${report.date}.doc`;
   a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 async function tabLogs() {
@@ -438,6 +385,7 @@ async function tabLogs() {
   const selectedDate = window.selectedLogDate || uniqueDates[0]; // Default to latest
   
   const report = generateReportData(logs, cmap, smap, selectedDate);
+  window.currentReportData = { logs, cmap, smap, selectedDate, report };
 
   const dateOptions = uniqueDates.map(dt => 
     `<option value="${dt}" ${dt === selectedDate ? 'selected' : ''}>${dt}</option>`
@@ -496,7 +444,7 @@ function tabUsers() {
       <td>${esc(u.role)}</td>
       <td>${u.active ? 'Active' : 'Disabled'}</td>
       <td class="text-right">
-        <button data-toggle-user="${u.id}" data-active="${u.active}"
+        <button data-toggle-user="${esc(u.id)}" data-active="${u.active}"
           class="text-xs ${u.active ? 'text-red-600' : 'text-teal-700'}">
           ${u.active ? 'Disable' : 'Enable'}</button>
       </td>
@@ -509,6 +457,15 @@ async function renderTab() {
   
   if (state.tab === 'logs') {
     body.innerHTML = await tabLogs();
+    const dateSelect = $('#log-date-select');
+    if (dateSelect) dateSelect.onchange = e => { window.selectedLogDate = e.target.value; renderTab(); };
+    const reportData = window.currentReportData;
+    if (reportData?.report) {
+      $('#btn-img').onclick = () => downloadImage(reportData.report);
+      $('#btn-csv').onclick = () => downloadCSV(reportData.logs, reportData.cmap, reportData.smap, reportData.selectedDate);
+      $('#btn-doc').onclick = () => downloadWord(reportData.report);
+      $('#btn-pdf').onclick = () => window.print();
+    }
     return;
   }
 
@@ -560,18 +517,18 @@ async function renderTab() {
     try { await api('createStudent', Object.fromEntries(f.entries())); await renderAdmin(); }
     catch (err) { alert(err.message); btn.innerText = 'Add student'; btn.disabled = false; }
   };
-  body.querySelectorAll('[data-del-class]').forEach(b =>
-    b.onclick = async () => { if (confirm('Delete class?')) { await api('deleteClass', { id: b.dataset.delClass }); renderAdmin(); } });
-  body.querySelectorAll('[data-del-subject]').forEach(b =>
-    b.onclick = async () => { if (confirm('Delete subject?')) { await api('deleteSubject', { id: b.dataset.delSubject }); renderAdmin(); } });
-  body.querySelectorAll('[data-del-teacher]').forEach(b =>
-    b.onclick = async () => { if (confirm('Delete teacher?')) { await api('deleteTeacher', { id: b.dataset.delTeacher }); renderAdmin(); } });
-  body.querySelectorAll('[data-del-student]').forEach(b =>
-    b.onclick = async () => { if (confirm('Delete student?')) { await api('deleteStudent', { id: b.dataset.delStudent }); renderAdmin(); } });
-  body.querySelectorAll('[data-toggle-user]').forEach(b =>
-    b.onclick = async () => { await api('toggleUser', {
-      id: b.dataset.toggleUser, active: b.dataset.active !== 'true'
-    }); renderAdmin(); });
+  body.querySelectorAll('[data-del-class]').forEach(b => b.onclick = () => runAdminAction(b, 'deleteClass', { id: b.dataset.delClass }, 'Delete this class?'));
+  body.querySelectorAll('[data-del-subject]').forEach(b => b.onclick = () => runAdminAction(b, 'deleteSubject', { id: b.dataset.delSubject }, 'Delete this subject?'));
+  body.querySelectorAll('[data-del-teacher]').forEach(b => b.onclick = () => runAdminAction(b, 'deleteTeacher', { id: b.dataset.delTeacher }, 'Delete this teacher?'));
+  body.querySelectorAll('[data-del-student]').forEach(b => b.onclick = () => runAdminAction(b, 'deleteStudent', { id: b.dataset.delStudent }, 'Delete this student?'));
+  body.querySelectorAll('[data-toggle-user]').forEach(b => b.onclick = () => runAdminAction(b, 'toggleUser', { id: b.dataset.toggleUser, active: b.dataset.active !== 'true' }, 'Change this user’s access?'));
+}
+
+async function runAdminAction(button, action, payload, message) {
+  if (!confirm(message)) return;
+  const oldText = button.textContent; button.disabled = true; button.textContent = 'Please wait…';
+  try { await api(action, payload); await renderAdmin(); }
+  catch (error) { alert(error.message); button.disabled = false; button.textContent = oldText; }
 }
 
 /* ==========================================
@@ -586,7 +543,7 @@ async function renderTeacher() {
   const smap = Object.fromEntries(subjects.map(s => [s.id, s.name]));
 
   const assignOpts = (teacher.assignments || []).map(a => 
-    `<option value="${a.classId}|${a.subjectId}">${esc(cmap[a.classId] || '?')} — ${esc(smap[a.subjectId] || '?')}</option>`
+    `<option value="${esc(JSON.stringify([a.classId, a.subjectId]))}">${esc(cmap[a.classId] || '?')} — ${esc(smap[a.subjectId] || '?')}</option>`
   ).join('');
 
   const logRows = logs.map(l => `
@@ -618,7 +575,7 @@ async function renderTeacher() {
           </div>
           <div>
             <label class="block text-sm mb-1">Date</label>
-            <input name="date" type="date" required class="input w-full" value="${new Date().toISOString().split('T')[0]}" />
+            <input name="date" type="date" required class="input w-full" value="${localDateISO()}" />
           </div>
           <div>
             <label class="block text-sm mb-1">Homework Due Date (optional)</label>
@@ -664,7 +621,7 @@ async function renderTeacher() {
     fLog.onsubmit = async e => {
       e.preventDefault();
       const f = new FormData(fLog);
-      const [classId, subjectId] = f.get('assignment').split('|');
+      const [classId, subjectId] = JSON.parse(f.get('assignment'));
       const btn = fLog.querySelector('button');
       btn.innerText = 'Saving to Drive...'; btn.disabled = true;
 

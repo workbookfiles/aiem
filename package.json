@@ -1,0 +1,9 @@
+{
+  "name": "alamdar-edu-portal",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check app.js && node --check utils.js && for f in backend/*.gs; do node --check < \"$f\" || exit 1; done"
+  }
+}
